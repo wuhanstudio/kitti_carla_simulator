@@ -79,6 +79,7 @@ class Camera(Sensor):
                 with open(self.folder_output+"/full_ts_camera.txt", 'a') as file:
                     file.write(str(self.sensor_frame_id)+" "+str(data.timestamp - Sensor.initial_ts)+"\n") #bug in CARLA 0.9.10: timestamp of camera is one tick late. 1 tick = 1/fps_simu seconds
             self.sensor_frame_id += 1
+        return self.sensor_frame_id
 
 class RGB(Camera):
     sensor_id_glob = 0
@@ -106,7 +107,7 @@ class RGB(Camera):
         return camera_bp
      
     def save(self):
-        Camera.save(self)
+        return Camera.save(self)
         
 
 class SS(Camera):
