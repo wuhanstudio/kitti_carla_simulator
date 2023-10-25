@@ -4,14 +4,34 @@ import glob
 import argparse
 
 import carla
+import queue
 
-from modules import generator_KITTI as gen
+from modules.sensors import Sensor, RGB, Depth, SS, HDL64E
+from modules.utils import follow, spawn_npc, transform_lidar_to_camera
 
-nbr_frame = 60 # MAX = 10000
+nbr_frame = 1_000    # MAX = 10_000
 nbr_walkers = 0
 nbr_vehicles = 50
 
 spawn_points = [23, 46, 0, 125, 53, 257, 62]
+
+def screenshot(vehicle, world, actor_list, folder_output, transform):
+    sensor = world.spawn_actor(RGB.set_attributes(
+        RGB, world.get_blueprint_library()), transform, attach_to=vehicle)
+    actor_list.append(sensor)
+    screenshot_queue = queue.Queue()
+    sensor.listen(screenshot_queue.put)
+    print('created %s' % sensor)
+
+    while screenshot_queue.empty():
+        world.tick()
+
+    file_path = folder_output+"/screenshot.png"
+    screenshot_queue.get().save_to_disk(file_path)
+    print("Export : "+file_path)
+    actor_list[-1].destroy()
+    print('destroyed %s' % actor_list[-1])
+    del actor_list[-1]
 
 def main(i_map, use_depth_camera, use_sem_seg_camera, use_lidar):
 
@@ -36,10 +56,13 @@ def main(i_map, use_depth_camera, use_sem_seg_camera, use_lidar):
         print("Map Town0"+str(i_map))
         world = client.load_world("Town0"+str(i_map))
 
-        folder_output = "KITTI_Dataset_CARLA_v%s/%s/generated" %(client.get_client_version(), world.get_map().name)
-        os.makedirs(folder_output) if not os.path.exists(folder_output) else [os.remove(f) for f in glob.glob(folder_output+"/*") if os.path.isfile(f)]
+        folder_output = "KITTI_Dataset_CARLA_v%s/%s/generated" % (
+            client.get_client_version(), world.get_map().name)
+        os.makedirs(folder_output) if not os.path.exists(folder_output) else [
+            os.remove(f) for f in glob.glob(folder_output+"/*") if os.path.isfile(f)]
 
-        client.start_recorder(os.path.dirname(os.path.realpath(__file__))+"/"+folder_output+"/recording.log")
+        client.start_recorder(os.path.dirname(os.path.realpath(
+            __file__))+"/"+folder_output+"/recording.log")
 
         # Weather
         world.set_weather(carla.WeatherParameters.WetCloudyNoon)
@@ -64,57 +87,78 @@ def main(i_map, use_depth_camera, use_sem_seg_camera, use_lidar):
         print('Created %s' % KITTI)
 
         # Spawn vehicles and walkers
-        gen.spawn_npc(client, nbr_vehicles, nbr_walkers, vehicles_list, all_walkers_id)
+        spawn_npc(client, nbr_vehicles, nbr_walkers,
+                  vehicles_list, all_walkers_id)
 
         # Wait for KITTI to stop
         start = world.get_snapshot().timestamp.elapsed_seconds
         print("Waiting for KITTI to stop ...")
-        while world.get_snapshot().timestamp.elapsed_seconds-start < time_stop: world.tick()
+        while world.get_snapshot().timestamp.elapsed_seconds-start < time_stop:
+            world.tick()
         print("KITTI stopped")
 
         # Set sensors transformation from KITTI
-        lidar_transform = carla.Transform(carla.Location(x=0, y=0, z=1.80), carla.Rotation(pitch=0, yaw=180, roll=0))
-        cam0_transform  = carla.Transform(carla.Location(x=0.30, y=0, z=1.70), carla.Rotation(pitch=0, yaw=0, roll=0))
-        cam1_transform  = carla.Transform(carla.Location(x=0.30, y=0.50, z=1.70), carla.Rotation(pitch=0, yaw=0, roll=0))
+        lidar_transform = carla.Transform(carla.Location(
+            x=0, y=0, z=1.80), carla.Rotation(pitch=0, yaw=180, roll=0))
+        cam0_transform = carla.Transform(carla.Location(
+            x=0.30, y=0, z=1.70), carla.Rotation(pitch=0, yaw=0, roll=0))
+        cam1_transform = carla.Transform(carla.Location(
+            x=0.30, y=0.50, z=1.70), carla.Rotation(pitch=0, yaw=0, roll=0))
 
         # Take a screenshot
-        gen.screenshot(KITTI, world, actor_list, folder_output, carla.Transform(carla.Location(x=0.0, y=0, z=2.0), carla.Rotation(pitch=0, yaw=0, roll=0)))
+        screenshot(KITTI, world, actor_list, folder_output, carla.Transform(
+            carla.Location(x=0.0, y=0, z=2.0), carla.Rotation(pitch=0, yaw=0, roll=0)))
 
         # Create our sensors
-        gen.RGB.sensor_id_glob = 0
-        gen.SS.sensor_id_glob = 10
-        gen.Depth.sensor_id_glob = 20
-        gen.HDL64E.sensor_id_glob = 100
+        RGB.sensor_id_glob = 0
+        SS.sensor_id_glob = 10
+        Depth.sensor_id_glob = 20
+        HDL64E.sensor_id_glob = 100
 
-        cam0 = gen.RGB(KITTI, world, actor_list, folder_output, cam0_transform)
-        cam1 = gen.RGB(KITTI, world, actor_list, folder_output, cam1_transform)
+        cam0 = RGB(KITTI, world, actor_list, folder_output, cam0_transform)
+        cam1 = RGB(KITTI, world, actor_list, folder_output, cam1_transform)
 
         if use_lidar:
-            VelodyneHDL64 = gen.HDL64E(KITTI, world, actor_list, folder_output, lidar_transform)
+            VelodyneHDL64 = HDL64E(
+                KITTI, world, actor_list, folder_output, lidar_transform)
 
         if use_depth_camera:
-            cam0_depth = gen.Depth(KITTI, world, actor_list, folder_output, cam0_transform)
-            cam1_depth = gen.Depth(KITTI, world, actor_list, folder_output, cam1_transform)
+            cam0_depth = Depth(KITTI, world, actor_list,
+                               folder_output, cam0_transform)
+            cam1_depth = Depth(KITTI, world, actor_list,
+                               folder_output, cam1_transform)
 
         if use_sem_seg_camera:
-            cam0_ss = gen.SS(KITTI, world, actor_list, folder_output, cam0_transform)
-            cam1_ss = gen.SS(KITTI, world, actor_list, folder_output, cam1_transform)
+            cam0_ss = SS(KITTI, world, actor_list,
+                         folder_output, cam0_transform)
+            cam1_ss = SS(KITTI, world, actor_list,
+                         folder_output, cam1_transform)
 
         # Export LiDAR to cam0 transformation
-        tf_lidar_cam0 = gen.transform_lidar_to_camera(lidar_transform, cam0_transform)
+        tf_lidar_cam0 = transform_lidar_to_camera(
+            lidar_transform, cam0_transform)
         with open(folder_output+"/lidar_to_cam0.txt", 'w') as posfile:
-            posfile.write("#R(0,0) R(0,1) R(0,2) t(0) R(1,0) R(1,1) R(1,2) t(1) R(2,0) R(2,1) R(2,2) t(2)\n")
-            posfile.write(str(tf_lidar_cam0[0][0])+" "+str(tf_lidar_cam0[0][1])+" "+str(tf_lidar_cam0[0][2])+" "+str(tf_lidar_cam0[0][3])+" ")
-            posfile.write(str(tf_lidar_cam0[1][0])+" "+str(tf_lidar_cam0[1][1])+" "+str(tf_lidar_cam0[1][2])+" "+str(tf_lidar_cam0[1][3])+" ")
-            posfile.write(str(tf_lidar_cam0[2][0])+" "+str(tf_lidar_cam0[2][1])+" "+str(tf_lidar_cam0[2][2])+" "+str(tf_lidar_cam0[2][3]))
+            posfile.write(
+                "#R(0,0) R(0,1) R(0,2) t(0) R(1,0) R(1,1) R(1,2) t(1) R(2,0) R(2,1) R(2,2) t(2)\n")
+            posfile.write(str(tf_lidar_cam0[0][0])+" "+str(tf_lidar_cam0[0][1])+" "+str(
+                tf_lidar_cam0[0][2])+" "+str(tf_lidar_cam0[0][3])+" ")
+            posfile.write(str(tf_lidar_cam0[1][0])+" "+str(tf_lidar_cam0[1][1])+" "+str(
+                tf_lidar_cam0[1][2])+" "+str(tf_lidar_cam0[1][3])+" ")
+            posfile.write(str(tf_lidar_cam0[2][0])+" "+str(tf_lidar_cam0[2][1])+" "+str(
+                tf_lidar_cam0[2][2])+" "+str(tf_lidar_cam0[2][3]))
 
         # Export LiDAR to cam1 transformation
-        tf_lidar_cam1 = gen.transform_lidar_to_camera(lidar_transform, cam1_transform)
+        tf_lidar_cam1 = transform_lidar_to_camera(
+            lidar_transform, cam1_transform)
         with open(folder_output+"/lidar_to_cam1.txt", 'w') as posfile:
-            posfile.write("#R(0,0) R(0,1) R(0,2) t(0) R(1,0) R(1,1) R(1,2) t(1) R(2,0) R(2,1) R(2,2) t(2)\n")
-            posfile.write(str(tf_lidar_cam1[0][0])+" "+str(tf_lidar_cam1[0][1])+" "+str(tf_lidar_cam1[0][2])+" "+str(tf_lidar_cam1[0][3])+" ")
-            posfile.write(str(tf_lidar_cam1[1][0])+" "+str(tf_lidar_cam1[1][1])+" "+str(tf_lidar_cam1[1][2])+" "+str(tf_lidar_cam1[1][3])+" ")
-            posfile.write(str(tf_lidar_cam1[2][0])+" "+str(tf_lidar_cam1[2][1])+" "+str(tf_lidar_cam1[2][2])+" "+str(tf_lidar_cam1[2][3]))
+            posfile.write(
+                "#R(0,0) R(0,1) R(0,2) t(0) R(1,0) R(1,1) R(1,2) t(1) R(2,0) R(2,1) R(2,2) t(2)\n")
+            posfile.write(str(tf_lidar_cam1[0][0])+" "+str(tf_lidar_cam1[0][1])+" "+str(
+                tf_lidar_cam1[0][2])+" "+str(tf_lidar_cam1[0][3])+" ")
+            posfile.write(str(tf_lidar_cam1[1][0])+" "+str(tf_lidar_cam1[1][1])+" "+str(
+                tf_lidar_cam1[1][2])+" "+str(tf_lidar_cam1[1][3])+" ")
+            posfile.write(str(tf_lidar_cam1[2][0])+" "+str(tf_lidar_cam1[2][1])+" "+str(
+                tf_lidar_cam1[2][2])+" "+str(tf_lidar_cam1[2][3]))
 
         # Launch KITTI
         KITTI.set_autopilot(True)
@@ -124,11 +168,11 @@ def main(i_map, use_depth_camera, use_sem_seg_camera, use_lidar):
 
         if use_lidar:
             VelodyneHDL64.init()
-        
-        gen.follow(KITTI.get_transform(), world)
+
+        follow(KITTI.get_transform(), world)
 
         # All sensors produce first data at the same time (this ts)
-        gen.Sensor.initial_ts = world.get_snapshot().timestamp.elapsed_seconds
+        Sensor.initial_ts = world.get_snapshot().timestamp.elapsed_seconds
 
         start_record = time.time()
         print("Start record : ")
@@ -154,7 +198,7 @@ def main(i_map, use_depth_camera, use_sem_seg_camera, use_lidar):
                 VelodyneHDL64.save()
 
             # Update the spectator view
-            gen.follow(KITTI.get_transform(), world)
+            follow(KITTI.get_transform(), world)
             world.tick()
 
         if use_lidar:
@@ -179,7 +223,8 @@ def main(i_map, use_depth_camera, use_sem_seg_camera, use_lidar):
             VelodyneHDL64.sensor.stop()
 
         print('Destroying %d vehicles' % len(vehicles_list))
-        client.apply_batch([carla.command.DestroyActor(x) for x in vehicles_list])
+        client.apply_batch([carla.command.DestroyActor(x)
+                           for x in vehicles_list])
         vehicles_list.clear()
 
         # Stop walker controllers (list is [controller, actor, controller, actor ...])
@@ -188,7 +233,8 @@ def main(i_map, use_depth_camera, use_sem_seg_camera, use_lidar):
             all_actors[i].stop()
 
         print('Destroying %d walkers' % (len(all_walkers_id)//2))
-        client.apply_batch([carla.command.DestroyActor(x) for x in all_walkers_id])
+        client.apply_batch([carla.command.DestroyActor(x)
+                           for x in all_walkers_id])
         all_walkers_id.clear()
 
         print('Destroying KITTI')
@@ -217,9 +263,12 @@ if __name__ == '__main__':
         default=1,
         help='Map index: Town 1, 2, 3, ..., 7'
     )
-    parser.add_argument('--use-depth-camera', action='store_true', help='Use depth camera')
-    parser.add_argument('--use-sem-seg-camera', action='store_true', help='Use depth camera')
+    parser.add_argument('--use-depth-camera',
+                        action='store_true', help='Use depth camera')
+    parser.add_argument('--use-sem-seg-camera',
+                        action='store_true', help='Use depth camera')
     parser.add_argument('--use-lidar', action='store_true', help='Use Lidar')
     args = parser.parse_args()
 
-    main(args.town, args.use_depth_camera, args.use_sem_seg_camera, args.use_lidar)
+    main(args.town, args.use_depth_camera,
+         args.use_sem_seg_camera, args.use_lidar)

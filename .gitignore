@@ -1,2 +1,3 @@
 KITTI_Dataset_CARLA_v*/
+__pycache__/
 *.pyc
